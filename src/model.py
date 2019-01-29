@@ -469,6 +469,38 @@ class TagHardAttnTransducer(TagTransducer, HardAttnTransducer):
     pass
 
 
+class MultiTaskHMMTransducer(HMMTransducer):
+    """
+    Add a second objective of classifying which language
+    we are predicting.
+    """
+    def forward(self, src_batch, src_mask, trg_word_batch, trg_lang_batch):
+        """
+        Override forward in order to make two predictions form the same input
+        """
+        # trg_seq_len, batch_size = trg_batch.size()
+        enc_hs = self.encode(src_batch)
+        # output: [trg_seq_len-1, batch_size, vocab_siz]
+        word_output = self.decode(enc_hs, src_mask, trg_word_batch)
+        # Try to predict the language. Not sure which parts of the architecture
+        # We want the lang classifier to know about yet..
+        #TODO consider implementing a seperate LanguageClassifier class.
+        lang_output = self.predict_lang(enc_hs, src_mask, trg_lang_batch)
+        return (word_output, lang_output)
+
+    def predict_lang(self, enc_hs, src_mask, trg):
+        return 0
+        
+    def _language_loss(self, predict, target):
+        # Use cross entropy to measure loss
+        # This should be a binary measurement since there are only 2 possible languages.
+        F.binary_cross_entropy(predict, target)
+        return pass
+
+    def loss(self, predict_word, target_word, predict_lang, target_lang):
+        return super().loss(predict_word, target_word)\
+            + self._language_loss(predict_lang, target_lang)
+
 def dummy_mask(seq):
     '''
     create dummy mask (all 1)
