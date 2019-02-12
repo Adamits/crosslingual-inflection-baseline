@@ -73,6 +73,7 @@ def get_args():
     parser.add_argument('--loglevel', default='info', choices=['info', 'debug'])
     parser.add_argument('--saveall', default=False, action='store_true', help='keep all models')
     parser.add_argument('--mono', default=False, action='store_true', help='enforce monotonicity')
+    parser.add_argument('--mtl', default=False, action='store_true', help='multitask learning with language objective')
     parser.add_argument('--bestacc', default=False, action='store_true', help='select model by accuracy only')
     # yapf: enable
     return parser.parse_args()
@@ -95,13 +96,13 @@ class Trainer(object):
         self.last_devloss = float('inf')
         self.models = list()
 
-    def load_data(self, dataset, train, dev, test=None):
+    def load_data(self, dataset, train, dev, test=None, mtl=False):
         assert self.data is None
         logger = self.logger
         # yapf: disable
         if dataset == Data.sigmorphon19task1:
             assert isinstance(train, list) and len(train) == 2
-            self.data = dataloader.TagSIGMORPHON2019Task1(train, dev, test)
+            self.data = dataloader.TagSIGMORPHON2019Task1(train, dev, testm, mtl)
         elif dataset == Data.sigmorphon19task2:
             assert isinstance(train, list) and len(train) == 1
             self.data = dataloader.TagSIGMORPHON2019Task2(train, dev, test)
@@ -132,14 +133,15 @@ class Trainer(object):
         mono = True
         # yapf: disable
         model_classfactory = {
-            (Arch.soft, not mono): model.TagTransducer,
-            (Arch.hard, not mono): model.TagHardAttnTransducer,
-            (Arch.hmm, mono): model.MonoTagHMMTransducer,
-            (Arch.hmmfull, not mono): model.TagFullHMMTransducer,
-            (Arch.hmmfull, mono): model.MonoTagFullHMMTransducer
+            (Arch.soft, not mono, not mtl): model.TagTransducer,
+            (Arch.hard, not mono, not mtl): model.TagHardAttnTransducer,
+            (Arch.hmm, mono, not mtl): model.MonoTagHMMTransducer,
+            (Arch.hmmfull, not mono, not mtl): model.TagFullHMMTransducer,
+            (Arch.hmmfull, mono, not mtl): model.MonoTagFullHMMTransducer,
+            (Arch.soft, not mono, not mtl): model.MultiTaskTagTransducer
         }
         # yapf: enable
-        model_class = model_classfactory[(opt.arch, opt.mono)]
+        model_class = model_classfactory[(opt.arch, opt.mono, opt.mtl)]
         self.model = model_class(**params)
         self.logger.info('number of attribute %d', self.model.nb_attr)
         self.logger.info('dec 1st rnn %r', self.model.dec_rnn.layers[0])
@@ -358,7 +360,7 @@ def main():
         torch.cuda.manual_seed_all(opt.seed)
 
     trainer = Trainer(logger)
-    trainer.load_data(opt.dataset, opt.train, opt.dev, test=opt.test)
+    trainer.load_data(opt.dataset, opt.train, opt.dev, test=opt.test, mtl=opt.mtl)
     if opt.load and opt.load != '0':
         if os.path.isfile(opt.load):
             start_epoch = trainer.load_model(opt.load) + 1

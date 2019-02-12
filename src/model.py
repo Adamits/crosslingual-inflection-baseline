@@ -469,37 +469,91 @@ class TagHardAttnTransducer(TagTransducer, HardAttnTransducer):
     pass
 
 
-class MultiTaskHMMTransducer(HMMTransducer):
+class MultiTaskTagTransducer(TagTransducer):
     """
     Add a second objective of classifying which language
     we are predicting.
     """
-    def forward(self, src_batch, src_mask, trg_word_batch, trg_lang_batch):
+    def __init__(**kwargs):
+        super().__init__(**kwargs)
+        # Just hardcode 2 since its always binary (lang_H or lang_L)
+        self.lang_out = nn.Linear(self.out_dim, 2)
+
+    def forward(self, src_batch, src_mask, trg_batch):
         """
         Override forward in order to make two predictions form the same input
         """
+        trg_word_batch, trg_lang = trg_batch
         # trg_seq_len, batch_size = trg_batch.size()
         enc_hs = self.encode(src_batch)
         # output: [trg_seq_len-1, batch_size, vocab_siz]
-        word_output = self.decode(enc_hs, src_mask, trg_word_batch)
+        word_output, final_dec_h = self.decode(enc_hs, src_mask, trg_word_batch)
         # Try to predict the language. Not sure which parts of the architecture
         # We want the lang classifier to know about yet..
         #TODO consider implementing a seperate LanguageClassifier class.
-        lang_output = self.predict_lang(enc_hs, src_mask, trg_lang_batch)
+        lang_output = self.predict_lang(final_dec_h trg_lang)
         return (word_output, lang_output)
 
-    def predict_lang(self, enc_hs, src_mask, trg):
-        return 0
-        
+    def decode(self, enc_hs, enc_mask, trg_batch):
+        '''
+        enc_hs: tuple(enc_hs, scale_enc_hs)
+
+        Overriding in order to also return last hidden for decoder
+        '''
+        trg_seq_len = trg_batch.size(0)
+        trg_bat_siz = trg_batch.size(1)
+        trg_embed = self.dropout(self.trg_embed(trg_batch))
+        output = []
+        hidden = self.dec_rnn.get_init_hx(trg_bat_siz)
+        for idx in range(trg_seq_len - 1):
+            input_ = trg_embed[idx, :]
+            word_logprob, hidden, _ = self.decode_step(enc_hs, enc_mask,
+                                                       input_, hidden)
+            output += [word_logprob]
+        return torch.stack(output), hidden
+
+    #def predict_lang_step(self, enc_hs, src_mask, trg):
+    #    """
+    #    This is like the decoder for the language prediction
+    #
+    #    Do we want the lang prediction gradients to backprop through
+    #    the decoder RNN? Or just Encoder? It seems like we at least want attn
+    #    to be part of this function, but attn requires previously decoded state.
+    #    Is there a trick here? e.g.
+    #    """
+    #    # COPIED FROM Transducer#Decode_step
+    #    h_t, hidden = self.dec_rnn(input_, hidden)
+    #    ctx, attn = self.attn(h_t, enc_hs, enc_mask)
+    #    # Concatenate the ht and ctx
+    #    # weight_hs: batch x (hs_dim + ht_dim)
+    #    ctx = torch.cat((ctx, h_t), dim=1)
+    #    # ctx: batch x out_dim
+    #    ctx = self.linear_out(ctx)
+    #    ctx = torch.tanh(ctx)
+    #    lang_prob = F.sigmoid(self.lang_out(ctx), dim=-1)
+    #    #word_logprob = F.log_softmax(self.final_out(ctx), dim=-1)
+    #    return lang_prob
+
+    def predict_lang(self, final_dec_h, trg_lang):
+        '''
+        enc_hs: tuple(enc_hs, scale_enc_hs)
+        '''
+        lang_prob = F.sigmoid(self.lang_out(final_dec_h))
+
     def _language_loss(self, predict, target):
         # Use cross entropy to measure loss
         # This should be a binary measurement since there are only 2 possible languages.
-        F.binary_cross_entropy(predict, target)
-        return pass
+        return F.binary_cross_entropy(predict, target)
 
-    def loss(self, predict_word, target_word, predict_lang, target_lang):
-        return super().loss(predict_word, target_word)\
-            + self._language_loss(predict_lang, target_lang)
+    def loss(self, preds, targets):
+        """
+        preds: [Tuple] of (word pred, lang pred)
+        targets: [Tuple] of (word target, lang target)
+        """
+        pred_w, pred_l = preds
+        targ_w, targ_l = targets
+        return super().loss(pred_w, targ_w)\
+            + self._language_loss(pred_l, targ_l)
 
 def dummy_mask(seq):
     '''

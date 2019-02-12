@@ -16,7 +16,7 @@ class Dataloader(object):
 
 
 class Seq2SeqDataLoader(Dataloader):
-    def __init__(self, train_file, dev_file, test_file=None):
+    def __init__(self, train_file, dev_file, test_file=None, mtl=False):
         super().__init__()
         # assert os.path.isfile(train_file)
         # assert os.path.isfile(dev_file)
@@ -30,6 +30,7 @@ class Seq2SeqDataLoader(Dataloader):
         self.source, self.target = self.build_vocab()
         self.source_vocab_size = len(self.source)
         self.target_vocab_size = len(self.target)
+        self.mtl = mtl
         if self.nb_attr > 0:
             self.source_c2i = {
                 c: i
@@ -113,6 +114,7 @@ class Seq2SeqDataLoader(Dataloader):
                 lst.append((len(src), src, trg))
             self.batch_data[key] = sorted(lst, key=lambda x: x[0])
 
+        lang = file2lang(file)
         lst = self.batch_data[key]
         for start in range(0, len(lst), batch_size):
             yield self._batch_helper(lst[start:start + batch_size])
@@ -221,6 +223,8 @@ class SIGMORPHON2019Task1(Seq2SeqDataLoader):
         if not isinstance(file, list):
             file = [file]
         for fp in file:
+            # Get lang from filename
+            lang = file2lang(file)
             for lemma, word, tags in self.read_file(fp):
                 src = [self.source_c2i[BOS]]
                 for tag in tags:
@@ -232,7 +236,10 @@ class SIGMORPHON2019Task1(Seq2SeqDataLoader):
                 for char in word:
                     trg.append(self.target_c2i.get(char, UNK_IDX))
                 trg.append(self.target_c2i[EOS])
-                yield src, trg
+                if self.mtl:
+                    yield src, (trg, lang)
+                else:
+                    yield src, trg
 
 
 class SIGMORPHON2019Task2(SIGMORPHON2019Task1):
@@ -338,6 +345,9 @@ class TagSIGMORPHON2019Task1(SIGMORPHON2019Task1):
             yield ((torch.tensor(src, device=self.device).view(len(src), 1),
                     torch.tensor(tags, device=self.device).view(1, len(tags))),
                    torch.tensor(trg, device=self.device).view(len(trg), 1))
+
+    def file2lang(file):
+        return file.split("/")[-1].split("-")[0]
 
 
 class TagSIGMORPHON2019Task2(TagSIGMORPHON2019Task1, SIGMORPHON2019Task2):
