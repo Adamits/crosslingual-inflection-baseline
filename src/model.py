@@ -474,10 +474,10 @@ class MultiTaskTagTransducer(TagTransducer):
     Add a second objective of classifying which language
     we are predicting.
     """
-    def __init__(**kwargs):
+    def __init__(self, **kwargs):
         super().__init__(**kwargs)
         # Just hardcode 2 since its always binary (lang_H or lang_L)
-        self.lang_out = nn.Linear(self.out_dim, 2)
+        self.lang_out = nn.Linear(self.trg_hid_size, 2)
 
     def forward(self, src_batch, src_mask, trg_batch):
         """
@@ -491,7 +491,7 @@ class MultiTaskTagTransducer(TagTransducer):
         # Try to predict the language. Not sure which parts of the architecture
         # We want the lang classifier to know about yet..
         #TODO consider implementing a seperate LanguageClassifier class.
-        lang_output = self.predict_lang(final_dec_h trg_lang)
+        lang_output = self.predict_lang(final_dec_h, trg_lang)
         return (word_output, lang_output)
 
     def decode(self, enc_hs, enc_mask, trg_batch):
@@ -538,7 +538,12 @@ class MultiTaskTagTransducer(TagTransducer):
         '''
         enc_hs: tuple(enc_hs, scale_enc_hs)
         '''
-        lang_prob = F.sigmoid(self.lang_out(final_dec_h))
+        h_t, c_t = final_dec_h
+        # Wanting to to just use the final decoder state
+        # through a single affine transformation for simplicity
+        # Unsure if both cell and hiddens tate of LSTM should be used?
+        lang_prob = F.sigmoid(self.lang_out(h_t))
+        return lang_prob
 
     def _language_loss(self, predict, target):
         # Use cross entropy to measure loss
@@ -546,10 +551,12 @@ class MultiTaskTagTransducer(TagTransducer):
         return F.binary_cross_entropy(predict, target)
 
     def loss(self, preds, targets):
-        """
+        '''
         preds: [Tuple] of (word pred, lang pred)
         targets: [Tuple] of (word target, lang target)
-        """
+
+        Sum the normal loss and language loss.
+        '''
         pred_w, pred_l = preds
         targ_w, targ_l = targets
         return super().loss(pred_w, targ_w)\

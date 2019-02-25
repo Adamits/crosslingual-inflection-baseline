@@ -102,7 +102,7 @@ class Trainer(object):
         # yapf: disable
         if dataset == Data.sigmorphon19task1:
             assert isinstance(train, list) and len(train) == 2
-            self.data = dataloader.TagSIGMORPHON2019Task1(train, dev, testm, mtl)
+            self.data = dataloader.TagSIGMORPHON2019Task1(train, dev, test, mtl)
         elif dataset == Data.sigmorphon19task2:
             assert isinstance(train, list) and len(train) == 1
             self.data = dataloader.TagSIGMORPHON2019Task2(train, dev, test)
@@ -131,6 +131,7 @@ class Trainer(object):
         params['trg_c2i'] = self.data.target_c2i
         params['attr_c2i'] = self.data.attr_c2i
         mono = True
+        mtl = True
         # yapf: disable
         model_classfactory = {
             (Arch.soft, not mono, not mtl): model.TagTransducer,
@@ -138,7 +139,7 @@ class Trainer(object):
             (Arch.hmm, mono, not mtl): model.MonoTagHMMTransducer,
             (Arch.hmmfull, not mono, not mtl): model.TagFullHMMTransducer,
             (Arch.hmmfull, mono, not mtl): model.MonoTagFullHMMTransducer,
-            (Arch.soft, not mono, not mtl): model.MultiTaskTagTransducer
+            (Arch.soft, not mono, mtl): model.MultiTaskTagTransducer
         }
         # yapf: enable
         model_class = model_classfactory[(opt.arch, opt.mono, opt.mtl)]
@@ -208,7 +209,7 @@ class Trainer(object):
     def setup_evalutator(self):
         self.evaluator = util.BasicEvaluator()
 
-    def train(self, epoch_idx, batch_size, max_norm):
+    def train(self, epoch_idx, batch_size, max_norm, mtl=False):
         logger, model, data = self.logger, self.model, self.data
         logger.info('At %d-th epoch with lr %f.', epoch_idx,
                     self.optimizer.param_groups[0]['lr'])
@@ -217,7 +218,10 @@ class Trainer(object):
         for src, src_mask, trg, _ in tqdm(
                 data.train_batch_sample(batch_size), total=nb_train_batch):
             out = model(src, src_mask, trg)
-            loss = model.loss(out, trg[1:])
+            if mtl:
+                loss = model.loss(out, (trg[0][1:], trg[1]))
+            else:
+                loss = model.loss(out, trg[1:])
             self.optimizer.zero_grad()
             loss.backward()
             if max_norm > 0:
@@ -236,13 +240,16 @@ class Trainer(object):
         else:
             raise ValueError(f'wrong mode: {mode}')
 
-    def calc_loss(self, mode, batch_size, epoch_idx=-1):
+    def calc_loss(self, mode, batch_size, epoch_idx=-1, mtl=False):
         self.model.eval()
         sampler, nb_batch = self.iterate_batch(mode, batch_size)
         loss, cnt = 0, 0
         for src, src_mask, trg, _ in tqdm(sampler(batch_size), total=nb_batch):
             out = self.model(src, src_mask, trg)
-            loss += self.model.loss(out, trg[1:]).item()
+            if mtl:
+                loss += model.loss(out, (trg[0][1:], trg[1])).item()
+            else:
+                loss += self.model.loss(out, trg[1:]).item()
             cnt += 1
         loss = loss / cnt
         self.logger.info(
@@ -327,7 +334,7 @@ class Trainer(object):
         self.logger.info('decoding dev set')
         self.decode(DEV, f'{model_fp}.decode')
         if self.data.test_file is not None:
-            self.calc_loss(TEST, batch_size)
+            self.calc_loss(TEST, batch_size, opt.mtl)
             self.logger.info('decoding test set')
             self.decode(TEST, f'{model_fp}.decode')
             results = self.evaluate(TEST)
@@ -379,7 +386,7 @@ def main():
                                opt.cooldown)
 
     for epoch_idx in range(start_epoch, start_epoch + opt.epochs):
-        trainer.train(epoch_idx, opt.bs, opt.max_norm)
+        trainer.train(epoch_idx, opt.bs, opt.max_norm, mtl=opt.mtl)
         with torch.no_grad():
             devloss = trainer.calc_loss(DEV, opt.bs, epoch_idx)
             eval_res = trainer.evaluate(DEV, epoch_idx)
