@@ -247,7 +247,7 @@ class Trainer(object):
         for src, src_mask, trg, _ in tqdm(sampler(batch_size), total=nb_batch):
             out = self.model(src, src_mask, trg)
             if mtl:
-                loss += model.loss(out, (trg[0][1:], trg[1])).item()
+                loss += self.model.loss(out, (trg[0][1:], trg[1])).item()
             else:
                 loss += self.model.loss(out, trg[1:]).item()
             cnt += 1
@@ -388,7 +388,7 @@ def main():
     for epoch_idx in range(start_epoch, start_epoch + opt.epochs):
         trainer.train(epoch_idx, opt.bs, opt.max_norm, mtl=opt.mtl)
         with torch.no_grad():
-            devloss = trainer.calc_loss(DEV, opt.bs, epoch_idx)
+            devloss = trainer.calc_loss(DEV, opt.bs, epoch_idx, opt.mtl)
             eval_res = trainer.evaluate(DEV, epoch_idx)
         if trainer.update_lr_and_stop_early(epoch_idx, devloss, opt.estop):
             break
