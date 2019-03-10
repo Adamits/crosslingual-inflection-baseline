@@ -337,23 +337,30 @@ class TagSIGMORPHON2019Task1(SIGMORPHON2019Task1):
         for start in range(0, len(lst), batch_size):
             yield self._batch_helper(lst[start:start + batch_size])
 
-    def train_sample(self):
-        for src, trg, tags in self._iter_helper(self.train_file):
+    def _yield_sample(self, src, trg, tags):
+        if self.mtl:
+            # Then trg is a tuple with lang in it
+            # Ignore the lang, as this sampling should only happen at eval time
+            # During which we don't care about predicting the lang.
+            yield ((torch.tensor(src, device=self.device).view(len(src), 1),
+                    torch.tensor(tags, device=self.device).view(1, len(tags))),
+                   torch.tensor(trg[0], device=self.device).view(len(trg[0]), 1))
+        else:
             yield ((torch.tensor(src, device=self.device).view(len(src), 1),
                     torch.tensor(tags, device=self.device).view(1, len(tags))),
                    torch.tensor(trg, device=self.device).view(len(trg), 1))
+
+    def train_sample(self):
+        for src, trg, tags in self._iter_helper(self.train_file):
+            return self._yield_sample(src, trg, tags)
 
     def dev_sample(self):
         for src, trg, tags in self._iter_helper(self.dev_file):
-            yield ((torch.tensor(src, device=self.device).view(len(src), 1),
-                    torch.tensor(tags, device=self.device).view(1, len(tags))),
-                   torch.tensor(trg, device=self.device).view(len(trg), 1))
+            return self._yield_sample(src, trg, tags)
 
     def test_sample(self):
         for src, trg, tags in self._iter_helper(self.test_file):
-            yield ((torch.tensor(src, device=self.device).view(len(src), 1),
-                    torch.tensor(tags, device=self.device).view(1, len(tags))),
-                   torch.tensor(trg, device=self.device).view(len(trg), 1))
+            return self._yield_sample(src, trg, tags)
 
     def _file2lang(self, file):
         l = file.split("/")[-1].split("-")[0]
